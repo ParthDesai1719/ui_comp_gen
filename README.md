@@ -1,7 +1,7 @@
-🧠 UI Component Generator (LLaMA 3.2 - Fine-Tuned)
+##🧠 UI Component Generator (LLaMA 3.2 - Fine-Tuned)
 This project fine-tunes the [LLaMA 3.2 1B Instruct](https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-bnb-4bit) model to generate React/JSX UI components from natural language descriptions. Built with [Unsloth](https://github.com/unslothai/unsloth), [PEFT](https://github.com/huggingface/peft), [TRL](https://github.com/huggingface/trl), and [Gradio](https://gradio.app).
 
-🗂️ Project Structure
+##🗂️ Project Structure
 ui_comp_gen/
 ├── config.py # Model and dataset configuration
 ├── setup_env.py # Install dependencies and check environment
