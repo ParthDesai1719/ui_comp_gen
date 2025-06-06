@@ -1,0 +1,21 @@
+# Core dependencies
+torch>=2.1.0
+transformers>=4.40.0
+datasets>=2.18.0
+scikit-learn>=1.4.0
+pandas>=2.1.0
+
+# Fine-tuning and optimization
+accelerate>=0.27.0
+bitsandbytes>=0.43.0
+trl>=0.8.6
+peft>=0.10.0
+
+# UI
+gradio>=4.16.0
+
+# Optional but required by Unsloth
+unsloth @ git+https://github.com/unslothai/unsloth.git#egg=unsloth[colab-new]
+
+# Ensure compatible xformers depending on torch version
+xformers==0.0.27 ; platform_system != "Windows"
