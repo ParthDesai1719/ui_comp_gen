@@ -12,3 +12,4 @@ def load_model():
     )
     print("✓ Model loaded successfully!")
     return model, tokenizer
+model, tokenizer = load_model()
