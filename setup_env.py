@@ -1,3 +1,12 @@
+%%capture
+!pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+!pip install trl peft accelerate bitsandbytes datasets pandas scikit-learn gradio
+
+from torch import __version__ as torch_version
+from packaging.version import Version as V
+xformers_version = "xformers==0.0.27" if V(torch_version) < V("2.4.0") else "xformers"
+!pip install --no-deps {xformers_version}
+
 import torch
 from unsloth import FastLanguageModel
 from trl import SFTTrainer
