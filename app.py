@@ -2,6 +2,7 @@ import torch
 from unsloth import FastLanguageModel
 import gradio as gr
 from inference.utils import clean_response
+from utils import clean_response
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name="unsloth/llama-3.2-1b-instruct-bnb-4bit",
