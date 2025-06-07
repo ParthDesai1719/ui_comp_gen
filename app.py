@@ -1,31 +1,35 @@
-# app.py
-
+import torch
+from unsloth import FastLanguageModel
 import gradio as gr
-from model_loader import load_model
-from utils import clean_response
+from inference.utils import clean_response
 
-model, tokenizer = load_model()
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name="unsloth/llama-3.2-1b-instruct-bnb-4bit",
+    max_seq_length=4096,
+    dtype=torch.float16,
+    load_in_4bit=True,
+    device_map="auto",
+)
+print("✓ Model loaded successfully!")
 
 def generate_component(prompt):
-    full_prompt = f"""<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n{prompt.strip()}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
-    input_ids = tokenizer(full_prompt, return_tensors="pt").input_ids.to(model.device)
+    formatted_prompt = f"<|begin_of_text|><|user|>\n{prompt.strip()}\n<|assistant|>"
+    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
 
     outputs = model.generate(
-        input_ids=input_ids,
-        max_new_tokens=512,
-        eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>"),
+        **inputs,
+        max_new_tokens=768,
         do_sample=True,
         temperature=0.7,
         top_p=0.9,
+        eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>"),
     )
 
     decoded = tokenizer.decode(outputs[0], skip_special_tokens=False)
-    if "<|start_header_id|>assistant<|end_header_id|>" in decoded:
-        decoded = decoded.split("<|start_header_id|>assistant<|end_header_id|>")[1]
-    if "<|eot_id|>" in decoded:
-        decoded = decoded.split("<|eot_id|>")[0]
-
-    return clean_response(decoded)
+    start = decoded.find("<|assistant|>") + len("<|assistant|>")
+    end = decoded.find("<|eot_id|>", start)
+    result = decoded[start:end].strip() if end != -1 else decoded[start:].strip()
+    return clean_response(result)
 
 gr.Interface(
     fn=generate_component,
