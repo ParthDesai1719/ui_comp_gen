@@ -1,42 +1,23 @@
-# === ui_comp_gen/config.py ===
-model_name = "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
+# === INSTALLS (uncomment if needed for Colab/local) ===
+!pip install --upgrade pip
+!pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+!pip install -U trl peft accelerate bitsandbytes datasets pandas scikit-learn gradio transformers
+
+# === CONFIG ===
+model_name = "unsloth/Llama-3-2B-Instruct-bnb-4bit"
 dataset_name = "justmalhar/fluent-dev"
-max_seq_length = 4096
+max_seq_length = 3072  # T4 safe
 output_dir = "fluent-ui-generator"
 
-
-# === ui_comp_gen/setup_env.py ===
+# === IMPORTS ===
 import torch
-from packaging.version import Version as V
-import os
-
-def install_and_check():
-    os.system('pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"')
-    os.system('pip install trl peft accelerate bitsandbytes datasets pandas scikit-learn gradio')
-    torch_version = torch.__version__
-    xformers = "xformers==0.0.27" if V(torch_version) < V("2.4.0") else "xformers"
-    os.system(f"pip install --no-deps {xformers}")
-    print("✓ Dependencies installed.")
-
-
-# === ui_comp_gen/model_loader.py ===
+import gradio as gr
+from datasets import load_dataset
 from unsloth import FastLanguageModel
-from config import model_name, max_seq_length
-import torch
+from transformers import TrainingArguments, DataCollatorForSeq2Seq
+from trl import SFTTrainer
 
-def load_model():
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=max_seq_length,
-        dtype=torch.float16,
-        load_in_4bit=True,
-        device_map="auto",
-    )
-    print("✓ Model loaded successfully!")
-    return model, tokenizer
-
-
-# === ui_comp_gen/dataset_formatter.py ===
+# === FORMAT DATASET ===
 def format_fluent_dev_chat(dataset):
     def format_example(example):
         return {
@@ -53,37 +34,48 @@ Generate a {example.get('category', 'component')} component with:
         "validation": dataset["validation"].map(format_example, remove_columns=dataset["validation"].column_names),
     }
 
-
-# === ui_comp_gen/dataset.py ===
-from datasets import load_dataset
-from dataset_formatter import format_fluent_dev_chat
-
+# === LOAD DATASET ===
 def get_dataset():
-    dataset = load_dataset("justmalhar/fluent-dev")
+    dataset = load_dataset(dataset_name)
     formatted = format_fluent_dev_chat(dataset)
     print("✓ Dataset loaded and formatted")
     return formatted
 
+# === LOAD MODEL ===
+def load_model():
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name="unsloth/llama-3.2-1b-instruct-bnb-4bit",
+        max_seq_length=4096,
+        dtype=torch.float16,
+        load_in_4bit=True,
+        device_map="auto",
+    )
 
-# === ui_comp_gen/train.py ===
-from transformers import TrainingArguments
-from trl import SFTTrainer
-from config import output_dir, max_seq_length
-from dataset import get_dataset
-from model_loader import load_model
-from transformers import DataCollatorForSeq2Seq
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=64,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        lora_alpha=16,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing=True,
+        random_state=42,
+        use_rslora=False,
+        loftq_config=None,
+    )
 
-def train_model():
-    model, tokenizer = load_model()
-    dataset = get_dataset()
+    print("✓ LoRA adapters attached & model ready!")
+    return model, tokenizer
 
+# === TRAIN MODEL ===
+def train_model(model, tokenizer, dataset):
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
         dataset_text_field="text",
-        max_seq_length=max_seq_length,
+        max_seq_length=4096,
         data_collator=DataCollatorForSeq2Seq(tokenizer),
         args=TrainingArguments(
             output_dir=output_dir,
@@ -93,19 +85,16 @@ def train_model():
             num_train_epochs=3,
             logging_steps=10,
             save_strategy="epoch",
-            evaluation_strategy="epoch",
             fp16=True,
             report_to="none",
         ),
     )
-
     trainer.train()
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
     print("✓ Training complete and model saved.")
 
-
-# === ui_comp_gen/utils.py ===
+# === CLEAN OUTPUT ===
 def clean_response(decoded):
     for tok in ["<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>", "<|eos|>"]:
         decoded = decoded.replace(tok, "")
@@ -114,35 +103,39 @@ def clean_response(decoded):
     cleaned = [line for line in lines if not line.strip().lower().startswith("generate a")]
     return "\n".join(cleaned)
 
-
-# === ui_comp_gen/app.py ===
-import gradio as gr
-from model_loader import load_model
-from utils import clean_response
-
-model, tokenizer = load_model()
-
+# === GENERATE COMPONENT ===
 def generate_component(prompt):
-    full_prompt = f"""<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n{prompt.strip()}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
-    input_ids = tokenizer(full_prompt, return_tensors="pt").input_ids.to(model.device)
+    formatted_prompt = f"<|begin_of_text|><|user|>\n{prompt.strip()}\n<|assistant|>"
+    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+
     outputs = model.generate(
-        input_ids=input_ids,
-        max_new_tokens=512,
-        eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>"),
+        **inputs,
+        max_new_tokens=768,
         do_sample=True,
         temperature=0.7,
         top_p=0.9,
+        eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>"),
     )
-    decoded = tokenizer.decode(outputs[0], skip_special_tokens=False)
-    if "<|start_header_id|>assistant<|end_header_id|>" in decoded:
-        decoded = decoded.split("<|start_header_id|>assistant<|end_header_id|>")[1]
-    if "<|eot_id|>" in decoded:
-        decoded = decoded.split("<|eot_id|>")[0]
-    return clean_response(decoded)
 
-gr.Interface(
-    fn=generate_component,
-    inputs=gr.Textbox(lines=6, label="Describe your component"),
-    outputs=gr.Code(label="Generated JSX"),
-    title="🧠 UI Component Generator (LLaMA 3)"
-).launch(share=True)
+    decoded = tokenizer.decode(outputs[0], skip_special_tokens=False)
+    start = decoded.find("<|assistant|>") + len("<|assistant|>")
+    end = decoded.find("<|eot_id|>", start)
+    result = decoded[start:end].strip() if end != -1 else decoded[start:].strip()
+    return clean_response(result)
+
+# === MAIN ===
+if __name__ == "__main__":
+    # Load model and dataset
+    model, tokenizer = load_model()
+    dataset = get_dataset()
+
+    # Train the model (comment out after training to avoid re-training)
+    # train_model(model, tokenizer, dataset)
+
+    # Launch Gradio app
+    gr.Interface(
+        fn=generate_component,
+        inputs=gr.Textbox(lines=6, label="Describe your component"),
+        outputs=gr.Code(label="Generated JSX"),
+        title="🧠 UI Component Generator (LLaMA 3)"
+    ).launch(share=True)
